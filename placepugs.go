@@ -38,51 +38,51 @@ func main() {
 	err = json.Unmarshal(f, &pugs)
 	if err != nil {
 		log.Fatalf("err failed to parse catalogue file: %v", err)
+		return
 	}
 
 	r := mux.NewRouter()
-	r.HandleFunc("/", handleIndex).Methods("GET")
 	r.HandleFunc("/{w:[0-9]+}/{h:[0-9]+}", handleImageRetrieval).Methods("GET")
 
+	log.Printf("running placepugs on port %v", 8482)
 	panic(http.ListenAndServe(":8482", r))
-}
-
-// handleIndex returns the main, user visitable index page of placepugs
-func handleIndex(w http.ResponseWriter, r *http.Request) {
-
 }
 
 // handleImageRetrieval handles the retrieval and display of placepugs.
 func handleImageRetrieval(rw http.ResponseWriter, r *http.Request) {
-	var w string
-	var h string
-	var nw uint64
-	var nh uint64
+	var wp string
+	var hp string
+	var w uint64
+	var h uint64
 	var err error
 
 	vars := mux.Vars(r)
 
-	if w = vars["w"]; w == "" {
+	if wp = vars["w"]; wp == "" {
 		badRequest(rw, "err: width not present")
 		return
 	}
 
-	if h = vars["h"]; h == "" {
+	if hp = vars["h"]; hp == "" {
 		badRequest(rw, "err: height not present")
 		return
 	}
 
-	if nw, err = strconv.ParseUint(w, 10, 32); err != nil || nw > 2000 {
+	if w, err = strconv.ParseUint(wp, 10, 32); err != nil || w > 2000 {
 		badRequest(rw, "err: width must be greater than 0 but less than 2000")
 		return
 	}
 
-	if nh, err = strconv.ParseUint(h, 10, 32); err != nil || nh > 2000 {
+	if h, err = strconv.ParseUint(hp, 10, 32); err != nil || h > 2000 {
 		badRequest(rw, "err: width must be greater than 0 but less than 2000")
 		return
 	}
 
-	file, err := pugFromSize(nw, nh)
+	log.Printf("retrieving image of w:%v h:%v", w, h)
+
+	pug := pugFromSize(w, h)
+
+	file, err := ioutil.ReadFile("images/" + pug.File)
 	if err != nil {
 		internalServerError(rw, "err: failed to open image")
 		return
@@ -94,10 +94,11 @@ func handleImageRetrieval(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rsi := resize.Resize(uint(nw), uint(nh), img, resize.Bicubic)
+	resizedImg := resize.Resize(uint(w), uint(h), img, resize.Bicubic)
 	rw.Header().Set("Content-Type", "image/jpeg")
+	rw.Header().Set("X-Original-Link", pug.Link)
 
-	if err = jpeg.Encode(rw, rsi, nil); err != nil {
+	if err = jpeg.Encode(rw, resizedImg, nil); err != nil {
 		internalServerError(rw, "err: failed to encode response")
 	}
 }
@@ -110,48 +111,44 @@ func badRequest(rw http.ResponseWriter, err string) {
 
 // internalServerError writes an internal server error response with an error to the response writer
 func internalServerError(rw http.ResponseWriter, err string) {
+	log.Printf("internal server error: %v", err)
 	rw.WriteHeader(http.StatusInternalServerError)
 	rw.Write([]byte(err))
 }
 
 // fileFromSize finds a file that matches the width and height closely, or alternative one that is as close as possible
 // to the aspect ratio of the request
-func pugFromSize(w uint64, h uint64) ([]byte, error) {
-	var selectedPug *pug
+func pugFromSize(w uint64, h uint64) *pug {
+	var selectedPugs []pug
 
 	// any exact matches means game on
 	for _, p := range pugs {
 		if p.Height == h && p.Width == w {
-			selectedPug = &p
+			selectedPugs = append(selectedPugs, p)
 			break
 		}
 	}
 
 	// if any matching the aspect ratio of the request
-	if selectedPug == nil {
+	if len(selectedPugs) == 0 {
 	}
 
 	// else, find based on portrait vs landscape
-	if selectedPug == nil {
-		var pa []pug
-		var orientation string
+	if len(selectedPugs) == 0 {
+		var o string
 
 		if w > h {
-			orientation = "landscape"
+			o = "landscape"
 		} else {
-			orientation = "portrait"
+			o = "portrait"
 		}
 
 		for _, p := range pugs {
-			if p.Orientation == orientation {
-				pa = append(pa, p)
+			if p.Orientation == o {
+				selectedPugs = append(selectedPugs, p)
 			}
-		}
-
-		if len(pa) > 0 {
-			selectedPug = &pa[rand.Intn(len(pa))]
 		}
 	}
 
-	return ioutil.ReadFile("images/" + selectedPug.File)
+	return &selectedPugs[rand.Intn(len(selectedPugs))]
 }
